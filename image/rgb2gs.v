@@ -14,12 +14,14 @@ module rgb2gs(
     assign gs_valid = gs_valid_reg; 
     assign gs = sum;
     
+    integer n_transform_debug = 0;
     always @(posedge clk) begin
         if (rgb_en) begin
             sum = (rgb[23:16] + rgb[7:0]) >> 1;
             sum = (sum + rgb[15:8]) >> 1;
             gs_valid_reg = 1;
-            //#100 $display("[%d %d %d] -> %d", rgb[23:16], rgb[15:8], rgb[7:0], gs);
+            $display("%d: RGB ([%d %d %d]) -> GS %d", n_transform_debug * 4, rgb[23:16], rgb[15:8], rgb[7:0], gs);
+            n_transform_debug = n_transform_debug + 1;
         end
         else
             gs_valid_reg = 0;

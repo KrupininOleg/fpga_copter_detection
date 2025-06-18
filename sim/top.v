@@ -25,6 +25,9 @@ module top;
       ///////////////////////////////////////////////////////////////////////////////////////////
      //Память///////////////////////////////////////////////////////////////////////////////////
     ///////////////////////////////////////////////////////////////////////////////////////////
+    
+    localparam DDR_WRITE_CMD = 3'b0;
+    localparam DDR_READ_CMD = 3'b1;
 
     reg [27:0]  app_addr_reg;
     reg [2:0]   app_cmd_reg;
@@ -95,6 +98,31 @@ module top;
         .data_valid    (camera_data_valid),
         .frame_end     (camera_frame_end)
     );
+   
+      ///////////////////////////////////////////////////////////////////////////////////////////
+     //Тестовая запись в файл///////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////////////////
+
+    localparam STORAGE_BUS_WIDTH = 32;
+
+    reg  [STORAGE_BUS_WIDTH - 1:0] storage_input_data_reg;
+    reg  storage_input_valid_reg;
+    wire [STORAGE_BUS_WIDTH - 1:0] storage_input_data;
+    wire storage_input_valid;
+    wire storage_ready;
+
+    assign storage_input_data = storage_input_data_reg;
+    assign storage_input_valid = storage_input_valid_reg;
+   
+    storage #(
+        .BUS_WIDTH (STORAGE_BUS_WIDTH)
+    )
+    u_storage (
+       .clk         (sys_clk),
+       .input_data  (storage_input_data),
+       .input_valid (storage_input_valid),
+       .ready       (storage_ready)
+    );
 
       ///////////////////////////////////////////////////////////////////////////////////////////
      //Предобработка данных с камеры////////////////////////////////////////////////////////////
@@ -106,8 +134,14 @@ module top;
     localparam PREPROCESSING_WRITE_RESULT            = 4'd4;
     localparam PREPROCESSING_WAIT_WRITING            = 4'd5;
 
+    localparam PREPROCESSING_READ_TEST               = 4'd12;
+    localparam PREPROCESSING_WAIT_READING_TEST       = 4'd13;
+    localparam PREPROCESSING_WRITE_STORAGE_TEST      = 4'd14;
+    localparam PREPROCESSING_WRITE_STORAGE_DONE_TEST = 4'd15;
+
     reg [3:0]  preprocessing_state = PREPROCESSING_READY;
     reg [31:0] cur_mem_addr = STRAT_ADDRESS;
+    reg [31:0] n_bits_mem_read;
 
     reg                                        preprocessor_input_en_reg;
     reg  [CAMERA_WIDTH_BUS - 1:0]              preprocessor_point_input_reg;
@@ -142,7 +176,13 @@ module top;
     always @(sys_clk) begin
         case (preprocessing_state)
             PREPROCESSING_READY: begin
-                if (init_calib_complete) begin // условие готовности следующих шагов
+                if (camera_frame_end) begin
+                    $display("FRAME END!!!");
+                    n_bits_mem_read <= cur_mem_addr - STRAT_ADDRESS;
+                    cur_mem_addr <= STRAT_ADDRESS;
+                    preprocessing_state <= PREPROCESSING_READ_TEST;
+                end
+                else if (init_calib_complete) begin // условие готовности следующих шагов
                     camera_recieve_ready_reg <= 1;
                     preprocessing_state <= PREPROCESSING_WAIT_CAMERA_IN_PROGRESS;
                 end
@@ -176,11 +216,12 @@ module top;
         endcase
     end
 
+    // Запись
     always @ (posedge ui_clk) begin
         case (preprocessing_state)
             PREPROCESSING_WRITE_RESULT: begin
                 if (app_rdy & app_wdf_rdy) begin
-                    app_cmd_reg = 3'b000; // Команда записать
+                    app_cmd_reg = DDR_WRITE_CMD; // Команда записать
                     app_addr_reg = cur_mem_addr; // Адрес
                     app_en_reg = 1; // Подтверждение адреса и команды
                     app_wdf_data_reg = preprocessor_point_output; // Данные
@@ -201,6 +242,51 @@ module top;
                     $display("write %h to %h", app_wdf_data_reg, cur_mem_addr);
                     cur_mem_addr = cur_mem_addr + 8 * CAMERA_WIDTH_BUS_N_POINTS;
                     preprocessing_state = PREPROCESSING_READY;
+                end
+            end
+            default;
+        endcase
+    end
+
+    // Чтение
+    always @ (posedge ui_clk) begin
+        case (preprocessing_state)
+            PREPROCESSING_READ_TEST: begin
+                if (app_rdy) begin
+                    // $display("PREPROCESSING_READ_TEST");
+                    app_cmd_reg = DDR_READ_CMD; // Команда читать
+                    app_addr_reg = cur_mem_addr; // Адрес
+                    app_en_reg = 1;
+                    preprocessing_state <= PREPROCESSING_WAIT_READING_TEST;
+                end
+            end
+            PREPROCESSING_WAIT_READING_TEST: begin
+                // $display("PREPROCESSING_WAIT_READING_TEST");
+                if (app_rdy & app_en_reg) begin
+                    app_en_reg <= 0;
+                end
+                if (app_rd_data_valid) begin
+                    storage_input_data_reg <= app_rd_data;
+                    preprocessing_state <= PREPROCESSING_WRITE_STORAGE_TEST;
+                    $display("!!!!!read done %h", app_rd_data);
+                end
+            end
+            PREPROCESSING_WRITE_STORAGE_TEST: begin
+                // $display("PREPROCESSING_WRITE_STORAGE_TEST");
+                storage_input_valid_reg <= 1;
+                preprocessing_state <= PREPROCESSING_WRITE_STORAGE_DONE_TEST;
+            end
+            PREPROCESSING_WRITE_STORAGE_DONE_TEST: begin
+                // $display("PREPROCESSING_WRITE_STORAGE_DONE_TEST");
+                if (storage_ready) begin
+                    storage_input_valid_reg <= 0;
+                    cur_mem_addr <= cur_mem_addr + 32'd32;
+                    n_bits_mem_read = n_bits_mem_read - 32'd32;
+                    if (n_bits_mem_read > 0)
+                        preprocessing_state <= PREPROCESSING_READ_TEST;
+                    else
+                        $finish;
+                        // preprocessing_state <= PREPROCESSING_READY;
                 end
             end
             default;

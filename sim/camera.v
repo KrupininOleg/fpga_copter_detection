@@ -15,6 +15,7 @@ module camera #(
     output                   frame_end
 );
     localparam N_FRAMES_BITS = BUS_WIDTH * SHAPE_H * SHAPE_W * SHAPE_CH;
+    // localparam N_FRAMES_BITS = 5000;
 
     integer input_file;
     integer code;
@@ -31,7 +32,7 @@ module camera #(
     assign in_progress = in_progress_reg;
 
     initial begin
-        input_file = $fopen("C:/Users/Public/OwnPrograms/stereo_vision/fpga/mig_without_axi/mig_without_axi.srcs/sources_1/ip/mig_7series_0/proj_with_mem/sim/data/running_0_2.bin", "rb");
+        input_file = $fopen("C:/Users/Public/OwnPrograms/stereo_vision/fpga/fpga_copter_detection/sim/data/running_0_2.bin", "rb");
         data_valid_reg = 0;
         n_bits_read = 0;
         frame_end_reg = 0;
@@ -46,14 +47,15 @@ module camera #(
         else if (~recieve_ready & in_progress) begin
             code = $fread(data_reg, input_file, 0, BUS_WIDTH);
             data_valid_reg = code > 0;
-            n_bits_read = n_bits_read + BUS_WIDTH;
-            $display("Read %d bits from %d", n_bits_read, N_FRAMES_BITS);
-            if (n_bits_read >= N_FRAMES_BITS) begin
-                frame_end_reg = 1;
-                n_bits_read = 0;
+            if (data_valid_reg) begin
+                n_bits_read = n_bits_read + BUS_WIDTH;
+                $display("Read %d bits from %d", n_bits_read, N_FRAMES_BITS);
+                if (n_bits_read >= N_FRAMES_BITS) begin
+                    frame_end_reg = 1;
+                    n_bits_read = 0;
+                end
+                in_progress_reg <= 0;
             end
-            in_progress_reg <= 0;
-            data_valid_reg <= 1;
         end
     end
 endmodule
