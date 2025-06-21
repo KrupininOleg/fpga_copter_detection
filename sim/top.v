@@ -5,6 +5,11 @@ module top;
     localparam CAMERA_WIDTH_BUS_N_POINTS = 4;
     localparam CAMERA_WIDTH_BUS = N_BITS_ONE_POINT * CAMERA_WIDTH_BUS_N_POINTS;
     localparam STRAT_ADDRESS = 32'd0;
+    localparam DDR3_BUS_WIDTH = 32;
+    
+    localparam INPUT_IMAGE_SHAPE_H   = 480;
+    localparam INPUT_IMAGE_SHAPE_W   = 848;
+    localparam INPUT_IMAGE_SHAPE_CH  = 3;
 
     reg sys_rst = 0;
     initial
@@ -29,21 +34,21 @@ module top;
     localparam DDR_WRITE_CMD = 3'b0;
     localparam DDR_READ_CMD = 3'b1;
 
-    reg [27:0]  app_addr_reg;
-    reg [2:0]   app_cmd_reg;
-    reg         app_en_reg;
-    reg [31:0]  app_wdf_data_reg;
-    reg [3:0]   app_wdf_mask_reg;
-    reg         app_wdf_wren_reg;
-    reg         app_wdf_end_reg;
-    wire [31:0] app_rd_data;
-    wire        app_rd_data_end;
-    wire        app_rd_data_valid;
-    wire        app_rdy;
-    wire        app_wdf_rdy;
-    wire        init_calib_complete;
-    wire        ui_clk;
-    wire        ui_clk_sync_rst;
+    reg  [27:0]                 app_addr_reg;
+    reg  [2:0]                  app_cmd_reg;
+    reg                         app_en_reg;
+    reg  [DDR3_BUS_WIDTH - 1:0] app_wdf_data_reg;
+    reg  [3:0]                  app_wdf_mask_reg;
+    reg                         app_wdf_wren_reg;
+    reg                         app_wdf_end_reg;
+    wire [DDR3_BUS_WIDTH - 1:0] app_rd_data;
+    wire                        app_rd_data_end;
+    wire                        app_rd_data_valid;
+    wire                        app_rdy;
+    wire                        app_wdf_rdy;
+    wire                        init_calib_complete;
+    wire                        ui_clk;
+    wire                        ui_clk_sync_rst;
 
     ddr3_top u_ddr3_top (
         .app_addr              (app_addr_reg),
@@ -65,7 +70,6 @@ module top;
         .ui_clk                (ui_clk),
         .ui_clk_sync_rst       (ui_clk_sync_rst)
     );
-
     
     always @ (posedge ui_clk) begin
         if (ui_clk_sync_rst) begin
@@ -179,7 +183,6 @@ module top;
                 if (camera_frame_end) begin
                     $display("FRAME END!!!");
                     n_bits_mem_read <= cur_mem_addr - STRAT_ADDRESS;
-                    cur_mem_addr <= STRAT_ADDRESS;
                     preprocessing_state <= PREPROCESSING_READ_TEST;
                 end
                 else if (init_calib_complete) begin // условие готовности следующих шагов
@@ -246,44 +249,82 @@ module top;
             end
             default;
         endcase
-    end
+    end 
+
+    reg [2:0] ddr3_reading_state;
+
+    localparam DDR3_READING_START = 3'd0;
+    localparam DDR3_READING_WAIT = 3'd1;
+    localparam DDR3_READING_DONE = 3'd2;
+
+    function [27:0] ij_to_address (
+        input [27:0] start_address,
+        input [9:0]  i,
+        input [9:0]  j,
+        input [9:0]  shape_j,
+        input [5:0]  size_of_type
+    );
+        begin
+            ij_to_address = start_address + (i * shape_j + j) * size_of_type;
+        end
+    endfunction
 
     // Чтение
     always @ (posedge ui_clk) begin
-        case (preprocessing_state)
-            PREPROCESSING_READ_TEST: begin
+        case (ddr3_reading_state)
+            DDR3_READING_START: begin
+                $display("DDR3_READING_START");
                 if (app_rdy) begin
-                    // $display("PREPROCESSING_READ_TEST");
                     app_cmd_reg = DDR_READ_CMD; // Команда читать
                     app_addr_reg = cur_mem_addr; // Адрес
                     app_en_reg = 1;
-                    preprocessing_state <= PREPROCESSING_WAIT_READING_TEST;
+                    ddr3_reading_state = DDR3_READING_WAIT;
                 end
             end
-            PREPROCESSING_WAIT_READING_TEST: begin
-                // $display("PREPROCESSING_WAIT_READING_TEST");
-                if (app_rdy & app_en_reg) begin
-                    app_en_reg <= 0;
-                end
+            DDR3_READING_WAIT: begin
+                $display("DDR3_READING_WAIT");
+                if (app_rdy & app_en_reg) 
+                    app_en_reg = 0;
                 if (app_rd_data_valid) begin
-                    storage_input_data_reg <= app_rd_data;
-                    preprocessing_state <= PREPROCESSING_WRITE_STORAGE_TEST;
-                    $display("!!!!!read done %h", app_rd_data);
+                    storage_input_data_reg = app_rd_data;
+                    ddr3_reading_state = DDR3_READING_DONE;
                 end
+            end
+            default;
+        endcase
+    end
+
+    reg [9:0] idx_i = 0;
+    reg [9:0] idx_j = 0;
+
+    // Почему-то не всегда корректно на sys_clk
+    always @ (posedge ui_clk) begin
+        case (preprocessing_state)
+            PREPROCESSING_READ_TEST: begin
+                $display("PREPROCESSING_READ_TEST");
+                cur_mem_addr = ij_to_address(STRAT_ADDRESS, idx_i, idx_j, INPUT_IMAGE_SHAPE_W, 8);
+                ddr3_reading_state = DDR3_READING_START;
+                preprocessing_state = PREPROCESSING_WRITE_STORAGE_TEST;
             end
             PREPROCESSING_WRITE_STORAGE_TEST: begin
-                // $display("PREPROCESSING_WRITE_STORAGE_TEST");
-                storage_input_valid_reg <= 1;
-                preprocessing_state <= PREPROCESSING_WRITE_STORAGE_DONE_TEST;
+                $display("PREPROCESSING_WRITE_STORAGE_TEST");
+                if (ddr3_reading_state == DDR3_READING_DONE) begin
+                    storage_input_valid_reg <= 1;
+                    preprocessing_state <= PREPROCESSING_WRITE_STORAGE_DONE_TEST;
+                end
             end
             PREPROCESSING_WRITE_STORAGE_DONE_TEST: begin
-                // $display("PREPROCESSING_WRITE_STORAGE_DONE_TEST");
+                $display("PREPROCESSING_WRITE_STORAGE_DONE_TEST");
                 if (storage_ready) begin
-                    storage_input_valid_reg <= 0;
-                    cur_mem_addr <= cur_mem_addr + 32'd32;
+                    storage_input_valid_reg = 0;
+                    idx_j = idx_j + 4;
+                    if (idx_j > INPUT_IMAGE_SHAPE_W) begin
+                        idx_i = idx_i + 1;
+                        idx_j = idx_j - INPUT_IMAGE_SHAPE_W;
+                    end
                     n_bits_mem_read = n_bits_mem_read - 32'd32;
                     if (n_bits_mem_read > 0)
-                        preprocessing_state <= PREPROCESSING_READ_TEST;
+                        preprocessing_state = PREPROCESSING_READ_TEST;
                     else
                         $finish;
                         // preprocessing_state <= PREPROCESSING_READY;
