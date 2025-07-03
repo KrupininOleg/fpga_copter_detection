@@ -14,7 +14,8 @@ module camera #(
     output                   data_valid,
     output                   frame_end
 );
-    localparam N_FRAMES_BITS = BUS_WIDTH * SHAPE_H * SHAPE_W * SHAPE_CH;
+    localparam BYTE = 8;
+    localparam N_FRAMES_BITS = BYTE * SHAPE_H * SHAPE_W * SHAPE_CH;
     // localparam N_FRAMES_BITS = 5000;
 
     integer input_file;
@@ -32,7 +33,7 @@ module camera #(
     assign in_progress = in_progress_reg;
 
     initial begin
-        input_file = $fopen("C:/Users/Public/OwnPrograms/stereo_vision/fpga/fpga_copter_detection/sim/data/running_0_2.bin", "rb");
+        input_file = $fopen("C:/Users/Public/OwnPrograms/stereo_vision/fpga/fpga_copter_detection/sim/data/random_image_16x16.bin", "rb");
         data_valid_reg = 0;
         n_bits_read = 0;
         frame_end_reg = 0;

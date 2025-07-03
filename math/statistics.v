@@ -2,6 +2,7 @@
 
 
 module mean #(
+    parameter DEBUG = 0,
     parameter SIZE = 512,       // 64 * 8
     parameter LOG2_N_VALUES = 6 // 64 = 2 ^ 6 
 )
@@ -35,6 +36,7 @@ module mean #(
         if (rst) begin
             output_valid_reg <= 0;
             sum <= 0;
+            i <= 0;
             state <= READY;
         end
         case (state)
@@ -45,6 +47,7 @@ module mean #(
                 end
             end
             IN_PROGRESS: begin
+                if (DEBUG) $display("UPDATE MEAN SUM %d + %d", sum,  values_reg[7:0]);
                 sum <= sum + values_reg[7:0];
                 values_reg <= values_reg >> 8;
                 values_reg[SIZE - 1:SIZE - 8] <= values_reg[7:0];
@@ -57,6 +60,7 @@ module mean #(
                 if (~output_valid_reg) begin
                     sum = sum + {sum[LOG2_N_VALUES - 1], {(LOG2_N_VALUES - 1){1'b0}}}; // деление
                     mean_value_reg = sum >> LOG2_N_VALUES;                             // с округлением до целых
+                    if (DEBUG) $display("COMPUTED MEAN %d from SUM %d", mean_value_reg, sum);
                     output_valid_reg = 1;
                 end
             end
@@ -66,6 +70,7 @@ endmodule
 
 
 module var #(
+    parameter DEBUG = 0,
     parameter SIZE = 512,       // 64 * 8
     parameter LOG2_N_VALUES = 6 // 64 = 2 ^ 6 
 )
@@ -75,7 +80,7 @@ module var #(
     input  [SIZE - 1:0] values,
     input  [7:0]        mean_value,
     input               input_valid,
-    output [7:0]        var_value,
+    output [13:0]       var_value,
     output              output_valid
 );
     localparam READY = 3'd0;
@@ -87,7 +92,7 @@ module var #(
     reg [7 + SIZE - 1:0] sum = 0;
     reg [15:0]           diff_reg = 0;
     reg [SIZE - 1:0]     values_reg = 0;
-    reg [7:0]            var_value_reg = 0;
+    reg [13:0]           var_value_reg = 0; // Максимальное значение (255 / 2) ^ 2 - 14 разрядов
     reg                  output_valid_reg = 0;
     reg [9:0]            i = 0;
 
@@ -98,6 +103,7 @@ module var #(
         if (rst) begin
             output_valid_reg <= 0;
             sum <= 0;
+            i <= 0;
             state <= READY;
         end
         case (state)
@@ -108,6 +114,7 @@ module var #(
                 end
             end
             IN_PROGRESS: begin
+                if (DEBUG) $display("UPDATE VAR SUM %d + %d (%d)", sum, diff_reg, values_reg[7:0]);
                 diff_reg = values_reg[7:0] - mean_value;
                 diff_reg = diff_reg * diff_reg;
                 sum = sum + diff_reg;
@@ -123,6 +130,7 @@ module var #(
                 if (~output_valid_reg) begin
                     sum = sum + {sum[LOG2_N_VALUES - 1], {(LOG2_N_VALUES - 1){1'b0}}}; // деление
                     var_value_reg = sum >> LOG2_N_VALUES;                              // с округлением до целых
+                    if (DEBUG) $display("COMPUTED VAR %d from SUM %d", var_value_reg, sum);
                     output_valid_reg = 1;
                 end
             end
